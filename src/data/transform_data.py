@@ -19,7 +19,11 @@ __all__ = [
 _MODULE = sys.modules[__name__]
 _MODULE_DIR = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
 
-def get_transformer_list(transformer_path=None, transformer_file=None, include_filename=False):
+def get_transformer_list(
+        transformer_path=None,
+        transformer_file=None,
+        include_filename=False,
+    ):
     """Get the list of transformation pipelines
 
     Returns
@@ -140,7 +144,17 @@ def add_transformer(from_datasource=None, datasource_opts=None,
     transformer_list.append(transformer)
     save_json(transformer_file_fq, transformer_list)
 
-def apply_transforms(transformer_path=None, transformer_file='transformer_list.json', output_dir=None):
+def apply_transforms(datasets=None, transformer_path=None, transformer_file='transformer_list.json', output_dir=None):
+    """Apply all data transforms to generate the specified datasets.
+
+    transformer_file: string, default "transformer_list.json"
+        Name of transformer file.
+    transformer_path: path
+        Path containing `transformer_file`. Default paths['catalog_path']
+    output_dir: path
+        Path to write the generated datasets. Default paths['processed_data_path']
+
+    """
 
     if output_dir is None:
         output_dir = paths['processed_data_path']
