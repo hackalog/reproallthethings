@@ -167,7 +167,14 @@ def available_datasources(datasource_file='datasources.json',
 
 
 class Dataset(Bunch):
-    def __init__(self, dataset_name=None, data=None, target=None, metadata=None, update_hashes=True,
+    def __init__(self,
+                 dataset_name=None,
+                 data=None,
+                 target=None,
+                 metadata=None,
+                 update_hashes=True,
+                 catalog_path=None,
+                 catalog_file='datasets.json',
                  **kwargs):
         """
         Object representing a dataset object.
@@ -181,9 +188,9 @@ class Dataset(Bunch):
             Either classification target or label to be used. for each of the points
             in `data`
         metadata: dict
-            Data about the object. Key fields include `license_txt` and `descr`
-        update_hashes:
-            If True, update the data/target hashes in the Metadata.
+            Data about the object. Key fields include `license_txt`, `descr`, and `hashes`
+        update_hashes: Boolean
+            If True, recompute the data/target hashes in the Metadata
         """
         super().__init__(**kwargs)
 
@@ -200,9 +207,27 @@ class Dataset(Bunch):
         self['metadata']['dataset_name'] = dataset_name
         self['data'] = data
         self['target'] = target
+        data_hashes = self.get_data_hashes()
+
         if update_hashes:
-            data_hashes = self.get_data_hashes()
             self['metadata'] = {**self['metadata'], **data_hashes}
+
+    def update_catalog(self, catalog_path=None, catalog_file='datasets.json'):
+        """Update the dataset catalog
+
+        Parameters
+        ----------
+        catalog_path: path or None
+            Location of catalog file. default paths['catalog_path']
+        catalog_file: str
+            dataset catalog file. relative to `catalog_path`. Default 'datasets.json'
+        """
+        dataset_name = self["metadata"]["dataset_name"]
+        dataset_catalog, catalog_file_fq = available_datasets(catalog_path=catalog_path, catalog_file=catalog_file, keys_only=False)
+        dataset_catalog[dataset_name] = self['metadata']
+        logger.debug(f"Updating dataset catalog with '{dataset_name}' metadata")
+        save_json(catalog_file_fq, dataset_catalog)
+
 
     def __getattribute__(self, key):
         if key.isupper():
@@ -249,22 +274,60 @@ class Dataset(Bunch):
         return self['target'] is not None
 
     @classmethod
-    def load(cls, file_base, data_path=None, metadata_only=False):
-        """Load a dataset
-        must be present in dataset.json"""
+    def load(cls, dataset_name, data_path=None, metadata_only=False, errors=True,
+             catalog_path=None, dataset_cache='datasets.json', check_hashes=True):
+        """Load a dataset by name (or its metadata)
+
+        errors: Boolean
+            if True, raise exception if dataset is not available on disk
+            if False, returns None if not found
+        metadata_only: Boolean
+            if True, return only metadata. Otherwise, return the entire dataset
+        dataset_name: str
+            name of dataset_dir
+        data_path: str
+            path containing `dataset_name`
+        catalog_path: str or None:
+            path to data catalog. default paths['catalog_path']
+        dataset_cache: str. default 'datasets.json'
+            name of dataset cache file. Relative to `catalog_path`.
+        check_hashes: Boolean
+            if True, hashes will  be checked against `dataset_cache`.
+            If they differ, an exception will be raised
+        """
+        if catalog_path is None:
+            catalog_path = paths['catalog_path']
+        else:
+            catalog_path = pathlib.Path(catalog_path)
 
         if data_path is None:
             data_path = paths['processed_data_path']
         else:
             data_path = pathlib.Path(data_path)
 
+        metadata_fq = data_path / f'{dataset_name}.metadata'
+        dataset_fq = data_path / f'{dataset_name}.dataset'
+        dataset_cache_fq = catalog_path / dataset_cache
+
+        if not metadata_fq.exists() and not dataset_fq.exists():
+            if errors:
+                raise FileNotFoundError(f"No dataset {dataset_name} in {data_path}.")
+            else:
+                return None
+
+        if check_hashes:
+            if not dataset_cache_fq.exists():
+                raise FileNotFoundError(f"No '{dataset_cache}' in catalog, but `check_hashes` is True")
+            else:
+                dataset_cache = load_json(dataset_cache_fq)
+
+        with open(metadata_fq, 'rb') as fd:
+            meta = joblib.load(fd)
+
         if metadata_only:
-            metadata_fq = data_path / f'{file_base}.metadata'
-            with open(metadata_fq, 'rb') as fd:
-                meta = joblib.load(fd)
             return meta
 
-        with open(data_path / f'{file_base}.dataset', 'rb') as fd:
+        with open(dataset_fq, 'rb') as fd:
             ds = joblib.load(fd)
         return ds
 
@@ -316,20 +379,26 @@ class Dataset(Bunch):
             if None, skips ['metadata']
 
         hash_type: {'sha1', 'md5', 'sha256'}
-            Algorithm to use for hashing
+            Algorithm to use for hashing. Must be valid joblib hash type
         """
         if exclude_list is None:
             exclude_list = ['metadata']
 
-        ret = {'hash_type': hash_type}
+        ret = {}
+        #ret = {'hash_type': hash_type}
+        hashes = {}
         for key, value in self.items():
             if key in exclude_list:
                 continue
-            ret[f"{key}_hash"] = joblib.hash(value, hash_name=hash_type)
+            data_hash = joblib.hash(value, hash_name=hash_type)
+            #ret[f"{key}_hash"] = data_hash
+            hashes[key] = (hash_type, data_hash)
+        ret["hashes"] = hashes
         return ret
 
     def dump(self, file_base=None, dump_path=None, hash_type='sha1',
-             force=True, create_dirs=True, dump_metadata=True):
+             force=False, create_dirs=True, dump_metadata=True, update_catalog=True,
+             catalog_path=None, catalog_file='datasets.json'):
         """Dump a dataset.
 
         Note, this dumps a separate copy of the metadata structure,
@@ -351,6 +420,12 @@ class Dataset(Bunch):
             If True, overwrite any existing files
         create_dirs: boolean
             If True, `dump_path` will be created (if necessary)
+        update_catalog: Boolean
+            if True, new metadata will be written to catalog
+        catalog_path: path or None
+            Location of catalog file. default paths['catalog_path']
+        catalog_file: str
+            dataset catalog file. relative to `catalog_path`. Default 'datasets.json'
 
         """
         if dump_path is None:
@@ -391,6 +466,9 @@ class Dataset(Bunch):
             with open(metadata_fq, 'wb') as fo:
                 joblib.dump(metadata, fo)
             logger.debug(f'Wrote Dataset Metadata: {metadata_filename}')
+
+        if update_catalog:
+            self.update_catalog(catalog_path=catalog_path, catalog_file=catalog_file)
 
         dataset_fq = dump_path / dataset_filename
         with open(dataset_fq, 'wb') as fo:
