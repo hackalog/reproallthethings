@@ -17,6 +17,7 @@ __all__ = [
     'DataSource',
     'add_datasource',
     'del_datasource',
+    'cached_datasets',
     'available_datasets',
     'available_datasources',
     'process_datasources',
@@ -25,13 +26,20 @@ __all__ = [
 _MODULE = sys.modules[__name__]
 _MODULE_DIR = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
 
-def available_datasets(dataset_path=None, keys_only=True):
-    """Get a list of available datasets.
+def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
+    """Get the set of datasets currently cached to disk.
 
     Parameters
     ----------
     dataset_path: path
         location of saved dataset files
+    keys_only: Boolean
+        if True, return a set of dataset names
+        if False, return dictionary mapping dataset names to their stored metadata
+    check_hashes: Boolean
+        if True, hashes will  be checked against `dataset_cache`.
+        If they differ, an exception will be raised
+
     """
     if dataset_path is None:
         dataset_path = paths['processed_data_path']
@@ -41,12 +49,42 @@ def available_datasets(dataset_path=None, keys_only=True):
     ds_dict = {}
     for dsfile in dataset_path.glob("*.metadata"):
         ds_stem = str(dsfile.stem)
-        ds_meta = Dataset.load(ds_stem, data_path=dataset_path, metadata_only=True)
+        ds_meta = Dataset.load(ds_stem, data_path=dataset_path, metadata_only=True, check_hashes=check_hashes)
         ds_dict[ds_stem] = ds_meta
 
     if keys_only:
-        return list(ds_dict.keys())
+        return set(ds_dict.keys())
     return ds_dict
+
+def available_datasets(catalog_path=None, catalog_file='datasets.json', keys_only=True):
+    """Get the set of available datasets from the catalog.
+
+    Parameters
+    ----------
+    catalog_path: path or None
+    catalog_file: str
+        File containing dataset metadata. By default, 'datasets.json'
+    keys_only: Boolean
+        if True, return a set of dataset names
+        if False, return dictionary mapping dataset names to their stored metadata
+    """
+    if catalog_path is None:
+        catalog_path = paths['catalog_path']
+    else:
+        catalog_path = pathlib.Path(catalog_path)
+
+    catalog_file_fq = catalog_path / catalog_file
+
+    if catalog_file_fq.exists():
+        ds_dict = load_json(catalog_file_fq)
+    else:
+        logger.warning(f"Dataset catalog '{catalog_file}' does not exist. Writing new dataset catalog")
+        ds_dict = {}
+        save_json(catalog_file_fq, ds_dict)
+
+    if keys_only:
+        return set(ds_dict.keys())
+    return ds_dict, catalog_file_fq
 
 
 def process_datasources(datasources=None, action='process'):
