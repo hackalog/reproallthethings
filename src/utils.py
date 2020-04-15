@@ -57,8 +57,8 @@ def save_json(filename, obj, indent=2, sort_keys=True):
 
 def load_json(filename):
     """Read a json file from disk"""
-    with open(filename) as fw:
-        obj = json.load(fw)
+    with open(filename) as f:
+        obj = json.load(f)
     return obj
 
 def head_file(filename, n=5):
