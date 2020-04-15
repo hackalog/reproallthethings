@@ -39,7 +39,7 @@ Analyses: make summary
 
 
 '''
-from .data.transformers import available_transformers
+from .user.transformers import available_transformers
 from .models import available_algorithms
 from .models.model_list import (get_model_list, add_model, del_model,
                                 build_models as make_train,
@@ -52,8 +52,8 @@ from .models.predict import (add_prediction, get_prediction_list,
 from .data import (Dataset, DataSource, available_datasets,
                    available_datasources, add_datasource, del_datasource,
                    process_datasources as make_sources)
-from .data.transform_data import (get_transformer_list, add_transformer, del_transformer,
-                                  apply_transforms as make_data)
+from .data import (get_transformers, add_transformer, del_transformer,
+                   apply_transforms as make_data)
 from .analysis.analysis import (available_scorers, available_analyses, get_analysis_list,
                                 run_analyses as make_analysis,
                                 add_analysis)

@@ -1,425 +1,196 @@
-
-import sys
-import pathlib
 import os
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from .datasets import Dataset
+import pathlib
+import sys
+
 from ..log import logger
-from ..utils import custom_join
+from ..utils import load_json, save_json
+from .datasets import Dataset, DataSource, available_datasources
+from ..user.transformers import available_transformers
+from .. import paths
 
 __all__ = [
-    'available_transformers'
+    'add_transformer',
+    'apply_transforms',
+    'del_transformer',
+    'get_transformers',
 ]
 
-_MODULE = sys.modules[__name__]
-_MODULE_DIR = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
-
-def available_transformers(keys_only=True):
-    """Valid transformation functions
-
-    This function simply returns a dict of known
-    tranformer algorithms strings and their corresponding
-    function call
-
-    It exists to allow for a description of the mapping for
-    each of the valid strings as a docstring
-
-    The valid algorithm names, and the function they map to, are:
-
-    ============                ====================================
-    string                      Transformer Function
-    ============                ====================================
-    train_test_split            train_test_split_xform
-    pivot                       pivot
-    index_to_date_time          index_to_date_time
-    add_srm_to_reviews          add_srm_to_reviews
-    groupby_style_to_reviewers  groupby_style_to_reviewers
-    sklearn_transform           sklearn_transform
-    groupby_beer_to_reviewers   groupby_beer_to_reviewers
-    groupby_breweries           groupby_breweries
-    groupby_breweries_by_style  groupby_breweries_by_style
-    ============                ====================================
-
-    Parameters
-    ----------
-    keys_only: boolean
-        If True, return only keys. Otherwise, return a dictionary mapping keys to algorithms
-    """
-    _TRANSFORMERS = {
-        "add_srm_to_reviews": add_srm_to_reviews,
-        "groupby_beer_to_reviewers": groupby_beer_to_reviewers,
-        "groupby_breweries": groupby_breweries,
-        "groupby_breweries_by_style": groupby_breweries_by_style,
-        "groupby_style_to_reviewers": groupby_style_to_reviewers,
-        "index_to_date_time": index_to_date_time,
-        "pivot": pivot,
-        "sklearn_transform": sklearn_transform,
-        "train_test_split": split_dataset_test_train,
-    }
-
-    if keys_only:
-        return list(_TRANSFORMERS.keys())
-    return _TRANSFORMERS
-
-
-def sklearn_transformers(keys_only=True):
-    """Valid sklearn-style transformers
-
-    This function simply returns a dict of known
-    tranformer algorithms strings and their corresponding
-    function call
-
-    It exists to allow for a description of the mapping for
-    each of the valid strings as a docstring
-
-    The valid algorithm names, and the function they map to, are:
-
-    ============                ====================================
-    string                      Transformer Function
-    ============                ====================================
-    CountVectorizer             sklearn.feature_extraction.text.CountVectorizer
-    TfidfVectorizer             sklearn.feature_extraction.text.TfidfVectorizer
-    ============                ====================================
-
-    Parameters
-    ----------
-    keys_only: boolean
-        If True, return only keys. Otherwise, return a dictionary mapping keys to algorithms
-    """
-    _SK_TRANSFORMERS = {
-        "CountVectorizer": CountVectorizer,
-        "TfidfVectorizer": TfidfVectorizer,
-    }
-
-    if keys_only:
-        return list(_SK_TRANSFORMERS.keys())
-    return _SK_TRANSFORMERS
-
-
-def split_dataset_test_train(dset,
-                             dump_path=None, dump_metadata=True,
-                             force=True, create_dirs=True,
-                             **split_opts):
-    """Transformer that performs a train/test split.
-
-    This transformer passes `dset` intact, but creates and dumps two new
-    datasets as a side effect: {dset.name}_test and {dset.name}_train
-
-    Parameters
-    ----------
-    dump_metadata: boolean
-        If True, also dump a standalone copy of the metadata.
-        Useful for checking metadata without reading
-        in the (potentially large) dataset itself
-    dump_path: path. (default: `processed_data_path`)
-        Directory where data will be dumped.
-    force: boolean
-        If False, raise an exception if any dunp files already exists
-        If True, overwrite any existing files
-    create_dirs: boolean
-        If True, `dump_path` will be created (if necessary)
-    **split_opts:
-        Remaining options will be passed to `train_test_split`
-
-    """
-    new_ds = {}
-    for kind in ['train', 'test']:
-        dset_name = f"{dset.name}_{kind}"
-        dset_meta = {**dset.metadata, 'split':kind, 'split_opts':split_opts}
-        new_ds[kind] = Dataset(dataset_name=dset_name, metadata=dset_meta)
-    X_train, X_test, y_train, y_test = train_test_split(dset.data, dset.target, **split_opts)
-
-    new_ds['train'].data = X_train
-    new_ds['train'].target = y_train
-    logger.info(f"Writing Transformed Dataset: {new_ds['train'].name}")
-    new_ds['train'].dump(force=force, dump_path=dump_path, dump_metadata=dump_metadata, create_dirs=create_dirs)
-
-    new_ds['test'].data = X_test
-    new_ds['test'].target = y_test
-    logger.info(f"Writing Transformed Dataset: {new_ds['test'].name}")
-    new_ds['test'].dump(force=force, dump_path=dump_path, dump_metadata=dump_metadata, create_dirs=create_dirs)
-    return dset
-
-def pivot(dset, **pivot_opts):
-    """Pivot data stored as a Pandas Dataframe
-
-    pivot_opts:
-        keyword arguments passed to pandas.Dataframe.pivot_table
-    """
-    pivoted = dset.data.pivot_table(**pivot_opts)
-    ds_pivot = Dataset(dataset_name=f"{dset.name}_pivoted", metadata=dset.metadata, data=pivoted, target=None)
-    ds_pivot.metadata['pivot_opts'] = pivot_opts
-
-    return ds_pivot
-
-def index_to_date_time(dset, suffix='dt'):
-    """Transformer: Extract a datetime index into Date and Time columns"""
-    df = dset.data.copy()
-    df['Time']=df.index.time
-    df['Date']=df.index.date
-    df.reset_index(inplace=True, drop=True)
-    new_ds = Dataset(dataset_name=f"{dset.name}_{suffix}", metadata=dset.metadata, data=df)
-    return new_ds
-
-def sklearn_transform(dset, transformer_name, transformer_opts=None, subselect_column=None, **opts):
-    """
-    Wrapper for any 1:1 (data in to data out) sklearn style transformer. Will run the .fit_transform
-    method of the transformer on dset.data. If subselect_column is not None, it will treat the data
-    like a dataframe and will subselect dset.data[subselect_column] to run the transformer on.
-
-    Parameters
-    ----------
-    dset:
-        Dataset
-    transformer_name: string
-        sklearn style transformer with a .fit_transform method avaible via sklearn_transformers.
-    transformer_opts: dict
-        options to pass on to the transformer
-    subselect_column: string
-        column name for dset.data to run the transformer on
-    return_whole: boolean
-        return the whole dataframe with a new column named "transformed"
-    **opts:
-        options to pass on to the fit_transform method
+def get_transformers(
+        transformer_path=None,
+        transformer_file=None,
+        include_filename=False,
+    ):
+    """Get the list of transformation pipelines
 
     Returns
     -------
-    Dataset whose data is the result of the transformer.fit_transform
-    """
-    if transformer_name in sklearn_transformers():
-        transformer = sklearn_transformers(keys_only=False).get(transformer_name)(**transformer_opts)
+    If include_filename is True:
+        A tuple: (transformer_list, transformer_file_fq)
     else:
-        raise ValueError(f"Invalid transformer name: {transformer_name}. See sklearn_transformers for available names.")
-    if subselect_column:
-        new_data = transformer.fit_transform(dset.data[subselect_column], **opts)
+        transformer_list
+
+    Parameters
+    ----------
+    include_filename: boolean
+        if True, returns a tuple: (list, filename)
+    transformer_path: path. (default: MODULE_DIR/data)
+        Location of `transformer_file`
+    transformer_file: string, default 'transformer_list.json'
+        Name of json file that contains the transformer pipeline
+    """
+    if transformer_path is None:
+        transformer_path = paths['catalog_path']
     else:
-        new_data = transformer.fit_transform(dset.data, **opts)
+        transformer_path = pathlib.Path(transformer_path)
+    if transformer_file is None:
+        transformer_file = 'transformer_list.json'
 
-    ds = Dataset(dataset_name=f"{dset.name}_{transformer.__class__.__name__}", metadata=dset.metadata, data=new_data)
-    return ds
+    transformer_file_fq = transformer_path / transformer_file
+    try:
+        transformer_list = load_json(transformer_file_fq)
+    except FileNotFoundError:
+        transformer_list = []
 
+    if include_filename:
+        return transformer_list, transformer_file_fq
+    return transformer_list
 
-def add_srm_to_reviews(review_dset, *, srm_dset_name):
+def del_transformer(index, transformer_path=None, transformer_file=None):
+    """Delete an entry in the transformer list
+
+    index: index of entry
+    transformer_path: path. (default: MODULE_DIR)
+        Location of `transformer_file`
+    transformer_file: string, default 'transformer_list.json'
+        Name of json file that contains the transformer pipeline
     """
-    Augments beer reviews with SRM (color assessment) data.
+    transformer_list, transformer_file_fq = get_transformer_list(transformer_path=transformer_path,
+                                                                 transformer_file=transformer_file,
+                                                                 include_filename=True)
 
-    See notebook 04 for what this does and why.
+    del(transformer_list[index])
+    save_json(transformer_file_fq, transformer_list)
+
+def add_transformer(from_datasource=None, datasource_opts=None,
+                    input_dataset=None, suppress_output=False, output_dataset=None,
+                    transformations=None,
+                    transformer_path=None, transformer_file=None):
+    """Create and add a dataset transformation pipeline to the workflow.
+
+    Transformer pipelines apply a sequence of transformer functions to a Dataset (or DataSource),
+    producing a new Dataset.
 
     Parameters
     ----------
-    review_dset:
-        beer review dataset as a pandas dataframe
-    srm_dset_name: string
-        name of corresponding srm Dataset
-
-    Returns
-    -------
-    style-by-review DataFrame
+    input_dataset: string
+        Name of a dataset_dir
+        Specifying this option creates a dataset transformation pipeline that begins
+        with an existing dataset_dir
+    from_datasource: string
+        Name of a raw DataSource.
+        Specifying this option creates a dataset transformation pipeline that begins
+        starts from a raw dataset with this namew
+    output_dataset: string
+        Name to use when writing the terminal Dataset object to disk.
+    datasource_opts: dict
+        Options to use when generating raw dataset
+    suppress_output: boolean
+        If True, the terminal dataset object is not written to disk.
+        This is useful when one of the intervening tranformers handles the writing; e.g. train/test split.
+    transformations: list of tuples
+        Squence of transformer functions to apply. tuples consist of:
+        (transformer_name, transformer_opts)
+    transformer_path: path. (default: MODULE_DIR)
+        Location of `transformer_file`
+    transformer_file: string, default 'transformer_list.json'
+        Name of json file that contains the transformer pipeline
     """
 
-    reviews = review_dset.data
-    srm_ds = Dataset.load(srm_dset_name)
-    srm_data = srm_ds.data
+    if from_datasource is not None and input_dataset is not None:
+        raise Exception('Cannot set both `from_datasource` and `input_datset`')
+    if from_datasource is None and datasource_opts is not None:
+        raise Exception('Must specify `from_datasource` when using `datasource_opts`')
 
-    # Groupby to select the fields that we want to use
-    beer_style = reviews.groupby('beer_style').agg({
-        'beer_name':lambda x: x.mode(),
-        'brewery_name':lambda x: x.mode(),
-        'beer_abv':'mean',
-        'review_aroma':'mean',
-        'review_appearance':'mean',
-        'review_palate':'mean',
-        'review_taste':'mean',
-        'review_overall':'mean',
-        'review_profilename':len
-    }).reset_index()
+    transformer_list, transformer_file_fq = get_transformer_list(transformer_path=transformer_path,
+                                                                 transformer_file=transformer_file,
+                                                                 include_filename=True)
 
-    beer_style.columns = """beer_style common_beer common_brewer abv
-    aroma appearance overall palate taste
-    num_reviews""".split()
-
-    # Augment beer style with SRM and RGB data
-    beer_style = beer_style.merge(srm_data[['kaggle_review_style','Style Category',
-                                            'SRM Mid','srm_rgb']], how='left',
-                    left_on='beer_style', right_on='kaggle_review_style')
-    beer_style.rename(columns={'SRM Mid':'srm_mid', 'Style Category':'style_category'},
-                      inplace=True)
-
-    # merge the metadata
-    merged_meta = {'descr': "Beer reviews augmented with SRM (colour) data. "
-                   f"See {review_dset.DATASET_NAME} and {srm_ds.DATASET_NAME} "
-                   "Datasets for complete details.",
-                   'license': f"See license information from {review_dset.DATASET_NAME} and "
-                   f"{srm_ds.DATASET_NAME} Datasets."
-    }
-    ds = Dataset(dataset_name="beer_style", metadata=merged_meta, data=beer_style)
-    return ds
-
-
-def groupby_style_to_reviewers(review_dset):
-    """
-    Turn our reviews data frame into a frame with one row per beer style instead of one row per review.
-
-    We groupby the column we'd like to embedd and then use agg with a dictionary of column names to
-    aggregation functions to tell it how to summarize the many reviews about a single beer into one record.
-    (Median and max are great functions for dealing with numeric fields).
-
-    Parameters
-    ----------
-    review_dset: Dataset
-        Dataset containing the beer reviews data
-
-    Returns
-    -------
-    beer style dataset with a dataframe representing beer style by reviewers
-    """
-    reviews = review_dset.data
-    unique_join = lambda x: custom_join(x.unique(), " ")
-    beer_style = reviews.groupby('beer_style').agg({
-        'beer_name':lambda x: x.mode(),
-        'brewery_name':lambda x: x.mode(),
-        'beer_abv':'mean',
-        'review_aroma':'mean',
-        'review_appearance':'mean',
-        'review_overall':'mean',
-        'review_palate':'mean',
-        'review_taste':'mean',
-        'review_profilename':[unique_join, len],
-        'brewery_id':lambda x: len(x.unique()),
-    }).reset_index()
-
-    beer_style.columns = """beer_style beer_name brewery_name beer_abv
-    review_aroma review_appearance review_overall review_palate review_taste
-    review_profilename_list num_reviewers num_ids""".split()
-    ds = Dataset(dataset_name="beer_style_reviewers", metadata=review_dset.metadata, data=beer_style)
-    return ds
-
-
-def groupby_beer_to_reviewers(review_dset, positive_threshold=None):
-    """
-    Turn our reviews data frame into a frame with one row per beer instead of one row per review.
-
-    We will also restrict to positive reviews only if a positive threshold value is set.
-
-    Parameters
-    ----------
-    review_dset: Dataset
-        Dataset containing the beer reviews data
-
-    positive_threshold: Default: None
-        Number between 0 and 5 representing the threshold for a postive review (aka. a positive
-        review is defined as a review with a value greater than positive_threshold).
-
-    Returns
-    -------
-    beer dataset with a dataframe representing beer by positive reviewers
-    """
-    reviews = review_dset.data
-    if positive_threshold is not None:
-        pos_reviews = reviews[reviews.review_overall>=positive_threshold]
+    transformer = {}
+    if from_datasource:
+        transformer['datasource_name'] = from_datasource
+        if output_dataset is None and not suppress_output:
+            output_dataset = from_datasource
+    elif input_dataset:
+        transformer['input_dataset'] = input_dataset
     else:
-        pos_reviews = reviews
+        raise Exception("Must specify one of from `from_datasource` or `input_dataset`")
 
-    unique_join = lambda x: custom_join(x.unique(), " ")
-    beer = pos_reviews.groupby('beer_beerid').agg({
-        'beer_name':'first',
-        'brewery_name':'first',
-        'beer_style':'first',
-        'beer_abv':'mean',
-        'review_aroma':'mean',
-        'review_appearance':'mean',
-        'review_overall':'mean',
-        'review_palate':'mean',
-        'review_taste':'mean',
-        'review_profilename':[unique_join, len]
-    }).reset_index()
+    if datasource_opts:
+        transformer['datasource_opts'] = datasource_opts
 
-    beer.columns = """beer_beerid beer_name brewery_name beer_style beer_abv
-    review_aroma review_appearance review_overall review_palate review_taste
-    review_profilename_list review_profilename_len""".split()
+    if transformations:
+        transformer['transformations'] = transformations
 
-    ds = Dataset(dataset_name="beer_reviewers", metadata=review_dset.metadata, data=beer)
-    return ds
+    if not suppress_output:
+        if output_dataset is None:
+            raise Exception("Must specify `output_dataset` (or use `suppress_output`")
+        else:
+            transformer['output_dataset'] = output_dataset
 
-def groupby_breweries(review_dset):
+    transformer_list.append(transformer)
+    save_json(transformer_file_fq, transformer_list)
+
+def apply_transforms(datasets=None, transformer_path=None, transformer_file='transformer_list.json', output_dir=None):
+    """Apply all data transforms to generate the specified datasets.
+
+    transformer_file: string, default "transformer_list.json"
+        Name of transformer file.
+    transformer_path: path
+        Path containing `transformer_file`. Default paths['catalog_path']
+    output_dir: path
+        Path to write the generated datasets. Default paths['processed_data_path']
+
     """
-    Transform to one row per brewery instead of one row per reviews.
 
-    It turns out there are a number of breweries with multiple brewery_ids for the same brewery_name.
-    Upon examining thse breweries they are inevitably chains of brew pubs with multiple locations.  We
-    feel that they should be treated as the same brewery.  Thus we chose to group by brewery_name
-    instead of brewery_id.
+    if output_dir is None:
+        output_dir = paths['processed_data_path']
+    else:
+        output_dir = pathlib.Path(output_dir)
 
-    Parameters
-    ----------
-    review_dset: Dataset
-        Dataset containing the beer reviews data
+    if transformer_path is None:
+        transformer_path = paths['catalog_path']
+    else:
+        transformer_path = pathlib.Path(transformer_path)
 
-    Returns
-    -------
-    brewery dataset with a dataframe representing breweries by reviewers
-    """
-    reviews = review_dset.data
-    unique_join = lambda x: custom_join(x.unique(), " ")
-    breweries = reviews.groupby('brewery_name').agg({
-        'beer_name':lambda x: x.mode(),
-        'beer_style':lambda x: x.mode(),
-        'beer_abv':'mean',
-        'review_aroma':'mean',
-        'review_appearance':'mean',
-        'review_overall':'mean',
-        'review_palate':'mean',
-        'review_taste':'mean',
-        'review_profilename':[unique_join, len],
-        'brewery_id':lambda x: len(x.unique()),
-    }).reset_index()
+    transformer_list = get_transformer_list(transformer_path=transformer_path,
+                                            transformer_file=transformer_file)
+    datasources = available_datasources()
+    transformers = available_transformers(keys_only=False)
 
-    breweries.columns = """brewery_name beer_name beer_style beer_abv
-    review_aroma review_appearance review_overall review_palate review_taste
-    review_profilename_list num_reviewers num_ids""".split()
-    ds = Dataset(dataset_name="breweries_reviewers", metadata=review_dset.metadata, data=breweries)
-    return ds
+    for tdict in transformer_list:
+        datasource_opts = tdict.get('datasource_opts', {})
+        datasource_name = tdict.get('datasource_name', None)
+        output_dataset = tdict.get('output_dataset', None)
+        input_dataset = tdict.get('input_dataset', None)
+        transformations = tdict.get('transformations', [])
+        if datasource_name is not None:
+            if datasource_name not in datasources:
+                raise Exception(f"Unknown DataSource: {datasource_name}")
+            logger.debug(f"Creating Dataset from Raw: {datasource_name} with opts {datasource_opts}")
+            rds = DataSource.from_name(datasource_name)
+            ds = rds.process(**datasource_opts)
+        else:
+            logger.debug("Loading Dataset: {input_dataset}")
+            ds = Dataset.load(input_dataset)
 
+        for tname, topts in transformations:
+            tfunc = transformers.get(tname, None)
+            if tfunc is None:
+                raise Exception(f"Unknwon transformer: {tname}")
+            logger.debug(f"Applying {tname} to {ds.name} with opts {topts}")
+            ds = tfunc(ds, **topts)
 
-def groupby_breweries_by_style(review_dset):
-    """
-    Transform to one row per brewery instead of one row per reviews.
-
-    It turns out there are a number of breweries with multiple brewery_ids for the same brewery_name.
-    Upon examining thse breweries they are inevitably chains of brew pubs with multiple locations.  We
-    feel that they should be treated as the same brewery.  Thus we chose to group by brewery_name
-    instead of brewery_id.
-
-    We will build a list for each brewery with one instance of the beer style for each review. This will
-    allow us differentiate breweries who claim to make every style of beer but who from the perspective
-    of most reviewers only make two styles.
-    Parameters
-    ----------
-    review_dset: Dataset
-        Dataset containing the beer reviews data
-
-    Returns
-    -------
-    brewery dataset with a dataframe representing breweries by most common beer style
-    """
-    reviews = review_dset.data
-    breweries = reviews.groupby('brewery_name').agg({
-        'beer_name':lambda x: x.mode().iloc[0],
-        'beer_style':[lambda x:custom_join(x,","),len, lambda x:x.mode().iloc[0]],
-        'beer_abv':'mean',
-        'review_aroma':'mean',
-        'review_appearance':'mean',
-        'review_overall':'mean',
-        'review_palate':'mean',
-        'review_taste':'mean',
-        'review_profilename':len,
-        'brewery_id':lambda x: len(x.unique()),
-    }).reset_index()
-
-    breweries.columns = """brewery_name beer_name beer_style num_beer_style favorite_style beer_abv
-    review_aroma review_appearance review_overall review_palate review_taste
-    num_reviewers num_ids""".split()
-
-    ds = Dataset(dataset_name="breweries_by_style", metadata=review_dset.metadata, data=breweries)
-    return ds
+        if output_dataset is not None:
+            logger.info(f"Writing transformed Dataset: {output_dataset}")
+            ds.name = output_dataset
+            ds.dump(dump_path=output_dir)
