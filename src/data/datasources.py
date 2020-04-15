@@ -424,6 +424,7 @@ class DataSource(object):
 
         self.fetched_ = False
         self.fetched_files_ = []
+        self.fetched_ = True
         for key, item in self.file_dict.items():
             status, result, hash_value = fetch_file(**item, force=force)
             logger.debug(f"Fetching {key}: status:{status}")
@@ -434,9 +435,7 @@ class DataSource(object):
             else:
                 if item.get('fetch_action', False) != 'message':
                     logger.error(f"fetch of {key} returned: {result}")
-                break
-        else:
-            self.fetched_ = True
+                self.fetched_ = False
 
         self.unpacked_ = False
         return self.fetched_
