@@ -112,3 +112,12 @@ def custom_join(iterator, seperator):
     for s in it:
         string += seperator + s
     return string
+
+def normalize_to_list(str_or_iterable):
+    """Convert strings to lists. Pass lists (or None) unchanged.
+    """
+    if isinstance(str_or_iterable, str):
+        return [str_or_iterable]
+    if str_or_iterable is None:
+        return []
+    return str_or_iterable
