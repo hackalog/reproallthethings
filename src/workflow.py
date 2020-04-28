@@ -39,7 +39,6 @@ Analyses: make summary
 
 
 '''
-from .user.transformers import available_transformers
 from .models import available_algorithms
 from .models.model_list import (get_model_list, add_model, del_model,
                                 build_models as make_train,
