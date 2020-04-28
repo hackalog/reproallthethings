@@ -166,6 +166,7 @@ def infer_filename(url=None, file_name=None, source_file=None, **kwargs):
         logger.debug(f"`file_name` not specified. Inferring from `source_file`: {file_name}")
     else:
         raise Exception('One of `file_name`, `url`, or `source_file` is required')
+    return file_name
 
 
 def fetch_file(url=None, contents=None,

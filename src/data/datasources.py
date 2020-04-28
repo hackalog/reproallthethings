@@ -310,11 +310,11 @@ class DataSource(object):
         self.fetched_ = False
 
     def add_url(self, url=None, *, hash_type='sha1', hash_value=None,
-                name=None, file_name=None, force=False):
-        """
-        Add a URL to the file list
+                name=None, file_name=None, force=False, unpack_action=None):
+        """Add a file to the file list by URL.
 
         hash_type: {'sha1', 'md5', 'sha256'}
+            hash function that produced `hash_value`. Default 'sha1'
         hash_value: string or None
             if None, hash will be computed from downloaded file
         file_name: string or None
