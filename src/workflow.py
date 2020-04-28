@@ -49,10 +49,10 @@ from .models.predict import (add_prediction, get_prediction_list,
                              pop_prediction,
                              run_predictions as make_predict,
                              available_predictions)
-from .data import (Dataset, DataSource, available_datasets,
+from .data import (Dataset, DataSource, available_datasets, get_dataset_catalog,
                    available_datasources, add_datasource, del_datasource,
                    process_datasources as make_sources)
-from .data import (get_transformers, add_transformer, del_transformer,
+from .data import (get_transformer_catalog, add_transformer_to_catalog, del_transformer_from_catalog,
                    apply_transforms as make_data)
 from .analysis.analysis import (available_scorers, available_analyses, get_analysis_list,
                                 run_analyses as make_analysis,

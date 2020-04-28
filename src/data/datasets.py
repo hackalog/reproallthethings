@@ -16,6 +16,7 @@ __all__ = [
     'get_dataset_catalog',
     'available_datasets',
     'check_dataset_hashes',
+    'TransformerGraph',
 ]
 
 def default_transformer(dsdict, **kwargs):

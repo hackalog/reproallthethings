@@ -5,11 +5,11 @@ from sklearn.model_selection import train_test_split
 
 from . import Dataset
 
-__all__ = {
+__all__ = [
     'sklearn_20newsgroups',
     'sklearn_train_test_split',
     'sklearn_transform',
-}
+]
 
 def sklearn_20newsgroups(
     ds_dict=None,
