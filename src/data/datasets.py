@@ -1,7 +1,7 @@
 import os
 import pathlib
 import sys
-from functools import partiali
+from functools import partial
 
 import joblib
 from sklearn.utils import Bunch
@@ -12,8 +12,6 @@ from ..log import logger
 from ..utils import load_json, save_json, normalize_to_list
 from .utils import partial_call_signature, serialize_partial, deserialize_partial, process_dataset_default
 from .fetch import fetch_file,  get_dataset_filename, hash_file, unpack, infer_filename
-from .process_functions import *
-from .transformer_functions import *
 
 
 __all__ = [
@@ -30,6 +28,8 @@ __all__ = [
     'apply_transforms',
     'transformer_catalog',
     'dataset_from_datasource',
+    'load_catalog',
+    'del_from_catalog',
 ]
 
 def default_transformer(dsdict, **kwargs):
@@ -1102,9 +1102,8 @@ class DataSource(object):
             Name of json file containing key/dict map
 
         """
-        datasources, _ = datasource_catalog(datasource_file=datasource_file,
-                                                 datasource_path=datasource_path,
-                                                 keys_only=False)
+        datasources = datasource_catalog(catalog_file=datasource_file,
+                                         catalog_path=datasource_path)
         return cls.from_dict(datasources[datasource_name])
 
     @classmethod
@@ -1624,7 +1623,7 @@ def apply_transforms(datasets=None, transformer_path=None, transformer_file='tra
     transformer_list = transformer_list(transformer_path=transformer_path,
                                             transformer_file=transformer_file)
     datasources = available_datasources()
-    transformers = available_transformers(keys_only=False)
+    transformers = transformer_catalog()
 
     for tdict in transformer_list:
         datasource_opts = tdict.get('datasource_opts', {})
