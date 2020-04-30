@@ -83,13 +83,16 @@ def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
         return set(ds_dict.keys())
     return ds_dict
 
-def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filename=False):
+def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filename=False, keys_only=False):
     """Get the set of available datasets from the catalog (nodes in the transformer graph).
 
     Parameters
     ----------
     include_filename: boolean
         if True, returns a tuple: (list, filename)
+    keys_only: boolean
+        if True, only keys will be returned.
+        Cannot be used with include_filename=True, as this can lead to data deletion
     catalog_path: path. (default: paths['catalog_dir'])
         Location of `catalog_file`
     catalog_file: str, default 'catalog.json'
@@ -102,6 +105,9 @@ def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filenam
     else:
         catalog_dict
     """
+    if keys_only and include_filename:
+        raise Exception("include_filenames=True implies keys_only=False")
+
     if catalog_path is None:
         catalog_path = paths['catalog_path']
     else:
@@ -117,6 +123,8 @@ def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filenam
 
     if include_filename:
         return catalog_dict, catalog_file_fq
+    if keys_only:
+        return list(catalog_dict.keys())
     return catalog_dict
 
 dataset_catalog = partial(load_catalog, catalog_file='datasets.json')
