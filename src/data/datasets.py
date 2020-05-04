@@ -378,7 +378,8 @@ class Dataset(Bunch):
         return ds
 
     @classmethod
-    def from_datasource(cls, dataset_name,
+    def from_datasource(cls, datasource_name,
+                        dataset_name=None,
                         cache_path=None,
                         fetch_path=None,
                         force=False,
@@ -391,8 +392,10 @@ class Dataset(Bunch):
 
         Parameters
         ----------
-        dataset_name:
-            Name of dataset to load. see `datasource_catalog()` for the current list
+        datasource_name: str
+            Name of DataSource to load. see `datasource_catalog()` for the current list
+        dataset_name: str
+            Name of dataset to create. By default this will be `datasource_name`
         cache_path: path
             Directory to search for Dataset cache files
         fetch_path: path
@@ -408,9 +411,11 @@ class Dataset(Bunch):
         Remaining keywords arguments are passed to the DataSource's `process()` method
         '''
         dsrc_dict = datasource_catalog()
-        if dataset_name not in dsrc_dict:
+        if datasource_name not in dsrc_dict:
             raise Exception(f'Unknown Dataset: {dataset_name}')
-        dsrc = DataSource.from_dict(dsrc_dict[dataset_name])
+        if dataset_name is not None:
+            dsrc_dict['name'] = dataset_name
+        dsrc = DataSource.from_dict(dsrc_dict[datasource_name])
         dsrc.fetch(fetch_path=fetch_path, force=force)
         dsrc.unpack(unpack_path=unpack_path, force=force)
         ds = dsrc.process(cache_path=cache_path, force=force, **kwargs)
@@ -555,7 +560,7 @@ def process_datasources(datasources=None, action='process'):
         datasources = datasource_catalog()
 
     for dataset_name in datasources:
-        dsrc = DataSource.from_name(dataset_name)
+        dsrc = DataSource.from_catalog(dataset_name)
         logger.info(f'Running {action} on {dataset_name}')
         if action == 'fetch':
             dsrc.fetch()
@@ -577,17 +582,17 @@ class DataSource(object):
 
     def __init__(self,
                  name='datasource',
-                 parse_function=None,
-                 dataset_dir=None,
+                 process_function=None,
+                 download_dir=None,
                  file_list=None):
         """Create a DataSource
         Parameters
         ----------
         name: str
             name of dataset
-        parse_function: func (or partial)
+        process_function: func (or partial)
             Function that will be called to process raw data into usable Dataset
-        dataset_dir: path
+        download_dir: path
             default location for raw files
         file_list: list
             list of file_dicts associated with this DataSource.
@@ -609,14 +614,14 @@ class DataSource(object):
         if file_list is None:
             file_list = []
 
-        if dataset_dir is None:
-            dataset_dir = paths['raw_data_path']
-        if parse_function is None:
-            parse_function = process_dataset_default
+        if download_dir is None:
+            download_dir = paths['raw_data_path']
+        if process_function is None:
+            process_function = process_dataset_default
         self.name = name
         self.file_dict = {infer_filename(**item):item for item in file_list}
-        self.parse_function = parse_function
-        self.dataset_dir = dataset_dir
+        self.process_function = process_function
+        self.download_dir = download_dir
 
         # sklearn-style attributes. Usually these would be set in fit()
         self.fetched_ = False
@@ -828,8 +833,9 @@ class DataSource(object):
         self.file_dict[file_name] = fetch_dict
         self.fetched_ = False
 
-    def dataset_opts(self, metadata=None, **kwargs):
+    def dataset_costructor_opts(self, metadata=None, **kwargs):
         """Convert raw DataSource files into a Dataset constructor dict
+
 
         Parameters
         ----------
@@ -855,10 +861,10 @@ class DataSource(object):
 
         data, target = None, None
 
-        if self.parse_function is None:
-            logger.warning("No `parse_function` defined. `data` and `target` will be None")
+        if self.process_function is None:
+            logger.warning("No `process_function` defined. `data` and `target` will be None")
         else:
-            data, target, metadata = self.parse_function(metadata=metadata, **kwargs)
+            data, target, metadata = self.process_function(metadata=metadata, **kwargs)
 
         dset_opts = {
             'dataset_name': self.name,
@@ -874,7 +880,7 @@ class DataSource(object):
         Parameters
         ----------
         fetch_path: None or string
-            By default, assumes dataset_dir
+            By default, assumes download_dir
 
         force: Boolean
             If True, ignore the cache and re-download the fetch each time
@@ -897,7 +903,7 @@ class DataSource(object):
                 return
 
         if fetch_path is None:
-            fetch_path = self.dataset_dir
+            fetch_path = self.download_dir
         else:
             fetch_path = pathlib.Path(fetch_path)
 
@@ -956,7 +962,6 @@ class DataSource(object):
         return self.unpack_path_
 
     def process(self,
-                dataset_name=None,
                 cache_path=None,
                 force=False,
                 return_X_y=False,
@@ -970,14 +975,14 @@ class DataSource(object):
         Parameters
         ----------
         cache_path: path
-            Location of joblib cache.
+            Location of dataset cache.
         force: boolean
             If False, use a cached object (if available).
             If True, regenerate object from scratch.
         return_X_y: boolean
             if True, returns (data, target) instead of a `Dataset` object.
         use_docstring: boolean
-            If True, the docstring of `self.parse_function` is used as the Dataset DESCR text.
+            If True, the docstring of `self.process_function` is used as the Dataset DESCR text.
         """
         if not self.unpacked_:
             logger.debug("process() called before unpack()")
@@ -1004,7 +1009,7 @@ class DataSource(object):
         if dset is None:
             metadata = self.default_metadata(use_docstring=use_docstring)
             supplied_metadata = kwargs.pop('metadata', {})
-            dset_opts = self.dataset_opts(metadata={**metadata, **supplied_metadata}, **kwargs)
+            dset_opts = self.dataset_costructor_opts(metadata={**metadata, **supplied_metadata}, **kwargs)
             dset = Dataset(**dset_opts)
             dset.dump(dump_path=cache_path, file_base=meta_hash)
 
@@ -1023,7 +1028,7 @@ class DataSource(object):
         Parameters
         ----------
         use_docstring: boolean
-            If True, the docstring of `self.parse_function` is used as the Dataset DESCR text.
+            If True, the docstring of `self.process_function` is used as the Dataset DESCR text.
 
         Returns
         -------
@@ -1048,7 +1053,7 @@ class DataSource(object):
                 with open(paths['raw_data_path'] / txtfile, 'r') as fr:
                     metadata[optmap[name]] = fr.read()
         if use_docstring:
-            func = partial(self.parse_function)
+            func = partial(self.process_function)
             fqfunc, invocation =  partial_call_signature(func)
             metadata['descr'] =  f'Data processed by: {fqfunc}\n\n>>> ' + \
               f'{invocation}\n\n>>> help({func.func.__name__})\n\n' + \
@@ -1071,7 +1076,7 @@ class DataSource(object):
             key/value pairs to add before hashing
         """
         if ignore is None:
-            ignore = ['dataset_dir']
+            ignore = ['download_dir']
         my_dict = {**self.to_dict(), **kwargs}
         for key in ignore:
             my_dict.pop(key, None)
@@ -1083,20 +1088,20 @@ class DataSource(object):
 
     def to_dict(self):
         """Convert a DataSource to a serializable dictionary"""
-        parse_function_dict = serialize_partial(self.parse_function)
+        process_function_dict = serialize_partial(self.process_function)
         obj_dict = {
             'url_list': list(self.file_dict.values()),
-            **parse_function_dict,
+            **process_function_dict,
             'name': self.name,
-            'dataset_dir': str(self.dataset_dir)
+            'download_dir': str(self.download_dir)
         }
         return obj_dict
 
     @classmethod
-    def from_name(cls, datasource_name,
+    def from_catalog(cls, datasource_name,
                   datasource_file='datasources.json',
                   datasource_path=None):
-        """Create a DataSource from a dictionary key name.
+        """Create a DataSource from its JSON catalog name.
 
         The `datasource_file` is a json file mapping datasource_name
         to its dictionary representation.
@@ -1122,24 +1127,24 @@ class DataSource(object):
 
         name: str
             dataset name
-        dataset_dir: path
+        download_dir: path
             pathname to load and save dataset
         obj_dict: dict
-            Should contain url_list, and parse_function_{name|module|args|kwargs} keys,
-            name, and dataset_dir
+            Should contain url_list, and load_function_{name|module|args|kwargs} keys,
+            name, and download_dir
         """
         file_list = obj_dict.get('url_list', [])
-        parse_function = deserialize_partial(obj_dict)
+        process_function = deserialize_partial(obj_dict, key_base='load_function')
         name = obj_dict['name']
-        dataset_dir = obj_dict.get('dataset_dir', None)
+        download_dir = obj_dict.get('download_dir', None)
         return cls(name=name,
-                   parse_function=parse_function,
-                   dataset_dir=dataset_dir,
+                   process_function=process_function,
+                   download_dir=download_dir,
                    file_list=file_list)
 
 
 class TransformerGraph:
-    """Transformer side of the bipartite Dataset Dependency Graph
+    """Dataset Dependency Graph, consisting of Datasets and Transformers
 
     A "transformer" is a function that:
 
@@ -1178,8 +1183,8 @@ class TransformerGraph:
         else:
             catalog_path = pathlib.Path(catalog_path)
 
-        self.transformers = transformer_catalog(catalog_path=catalog_path, catalog_file=transformer_file)
-        self.datasets = dataset_catalog(catalog_path=catalog_path, catalog_file=dataset_file)
+        self.transformers, self._transformer_catalog_fq = transformer_catalog(catalog_path=catalog_path, catalog_file=transformer_file, include_filename=True)
+        self.datasets, self._dataset_catalog_fq = dataset_catalog(catalog_path=catalog_path, catalog_file=dataset_file, include_filename=True)
 
         self._validate_hypergraph()
 
@@ -1432,8 +1437,10 @@ def dataset_from_datasource(dsdict, *, datasource_name, dataset_name=None, **dsr
     dsdict: dict, ignored.
         Because this is a source, this argument is unnecessary (except to
         conform to the transformer function API) and is ignored
-    dataset_name: str, required
+    datasource_name: str, required
         Name of datasource in DataSource catalog
+    dataset_name: str
+        Name of the generated Dataset. If None, this will be the `datasource_name`
     dsrc_args: dict
         Arguments are the same as the `Dataset.from_datasource()` constructor
 
@@ -1441,7 +1448,9 @@ def dataset_from_datasource(dsdict, *, datasource_name, dataset_name=None, **dsr
     -------
     dict: {dataset_name: Dataset}
     """
-    ds = Dataset.from_datasource(dataset_name, **dsrc_args)
+    if dataset_name is None:
+        dataset_name = datasource_name
+    ds = Dataset.from_datasource(dataset_name=dataset_name, datasource_name=datasource_name, **dsrc_args)
     return {dataset_name: ds}
 
 def transformer_catalog(
@@ -1500,6 +1509,7 @@ def add_transformer(
         edge_file=None,
         node_file=None,
         write_to_catalog=True,
+        add_datasets=True,
         force=False,
 ):
     """Create and add a dataset transformation pipeline to the workflow.
@@ -1676,7 +1686,7 @@ def apply_transforms(datasets=None, transformer_path=None, transformer_file='tra
             if datasource_name not in datasources:
                 raise Exception(f"Unknown DataSource: {datasource_name}")
             logger.debug(f"Creating Dataset from Raw: {datasource_name} with opts {datasource_opts}")
-            rds = DataSource.from_name(datasource_name)
+            rds = DataSource.from_catalog(datasource_name)
             ds = rds.process(**datasource_opts)
         else:
             logger.debug("Loading Dataset: {input_dataset}")
