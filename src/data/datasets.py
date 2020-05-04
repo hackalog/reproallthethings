@@ -16,6 +16,7 @@ from .fetch import fetch_file,  get_dataset_filename, hash_file, unpack, infer_f
 
 __all__ = [
     'Dataset',
+    'add_dataset',
     'dataset_catalog',
     'cached_datasets',
     'check_dataset_hashes',
@@ -955,6 +956,7 @@ class DataSource(object):
         return self.unpack_path_
 
     def process(self,
+                dataset_name=None,
                 cache_path=None,
                 force=False,
                 return_X_y=False,
@@ -1388,7 +1390,38 @@ def create_transformer_pipeline(func_list, ignore_module=False):
 
     return ret
 
-def dataset_from_datasource(dsdict, *, dataset_name, **dsrc_args):
+def add_dataset(dataset=None, dataset_name=None, datasource_name=None, datasource_opts=None):
+    """Add a Dataset to the dataset catalog
+
+    dataset: Dataset
+        Dataset object to add to catalog
+    dataset_name:
+        name to use when adding this object to the catalog
+
+    datasource_name: str
+        If specified, dataset will be generated from a datasource object with this name.
+        Must be present in the datasource catalog
+    datasource_opts: dict
+        kwargs dictionary to use when generating this dataset
+
+    """
+    if dataset is not None and dataset_name is not None:
+        raise Exception('Cannot use `dataset_name` if passing a `dataset` directly')
+
+    if (dataset is None and datasource_name is None) or (dataset is not None and datasource_name is not None):
+        raise Exception('Must specify exactly one of `dataset` or `datasource_name`')
+
+    if datasource_name is not None:
+        if dataset_name is None:
+            dataset_name = datasource_name
+        dataset = Dataset.from_datasource(datasource_name=datasource_name, dataset_name=dataset_name, **datasource_opts)
+
+    dataset_catalog, dataset_catalog_fq = dataset_catalog(include_filename=True)
+    dataset_catalog[dataset_name] = dataset.metadata
+    save_json(dataset_catalog_fq, dataset_catalog)
+
+
+def dataset_from_datasource(dsdict, *, datasource_name, dataset_name=None, **dsrc_args):
     """Transformer: Create a Dataset from a DataSource object
 
     This is just a thin wrapper around Dataset.from_datasource in order to

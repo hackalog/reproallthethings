@@ -31,10 +31,11 @@ XXX
 from .data import (cached_datasets, dataset_catalog,
                    datasource_catalog, add_datasource, load_catalog, del_from_catalog,
                    process_datasources as make_sources)
-from .data import (transformer_catalog, add_transformer,
+from .data import (transformer_catalog, add_transformer, add_dataset,
                    apply_transforms as make_data)
 
 __all__ = [
+    'add_dataset',
     'add_datasource',
     'add_transfomer',
     'cached_datasets',
