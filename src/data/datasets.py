@@ -1335,7 +1335,7 @@ class TransformerGraph:
             datasource_transformer = partial(dataset_from_datasource, **datasource_opts,
                                              dataset_name=output_datasets[0],
                                              datasource_name=datasource_name)
-            transformer_pipeline = [serialize_partial(datasource_transformer, key_base='transformer')]
+            transformer_pipeline = create_transformer_pipeline([datasource_transformer])
 
         catalog_entry['transformations'] = transformer_pipeline
         catalog_entry['output_datasets'] = output_datasets
@@ -1516,6 +1516,8 @@ def create_transformer_pipeline(func_list, ignore_module=False):
         serialized = serialize_partial(f, key_base='transformer')
         if ignore_module:
             del(serialized['transformer_module'])
+        if not serialized['transformer_args']:
+            del(serialized['transformer_args'])
         ret.append(serialized)
 
     return ret
@@ -1539,8 +1541,8 @@ def add_dataset(dataset=None, dataset_name=None, datasource_name=None, datasourc
         raise Exception('Cannot use `dataset_name` if passing a `dataset` directly')
 
     if (dataset is None and datasource_name is None) or (dataset is not None and datasource_name is not None):
-        raise Exception('Must specify exactly one of `dataset` or `datasource_name`')
 
+        raise Exception('Must specify exactly one of `dataset` or `datasource_name`')
     if datasource_name is not None:
         if dataset_name is None:
             dataset_name = datasource_name
