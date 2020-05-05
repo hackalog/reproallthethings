@@ -114,7 +114,7 @@ def custom_join(iterator, seperator):
     return string
 
 def normalize_to_list(str_or_iterable):
-    """Convert strings to lists. Pass lists (or None) unchanged.
+    """Convert strings to lists. convert None to list. Convert all other iterables to lists
     """
     if isinstance(str_or_iterable, str):
         return [str_or_iterable]
