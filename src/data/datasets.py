@@ -20,7 +20,6 @@ __all__ = [
     'add_dataset',
     'dataset_catalog',
     'cached_datasets',
-    'check_dataset_hashes',
     'DataSource',
     'add_datasource',
     'datasource_catalog',
@@ -34,25 +33,17 @@ __all__ = [
 ]
 
 def default_transformer(dsdict, **kwargs):
-    """Placeholder for transformerdata processing function"""
+    """Placeholder for transformerdata processing function.
+
+    This is the identity function.
+
+    Returns
+    -------
+    dsdict: The input dsdict unmodified
+    """
     transformer_name = kwargs.get('transformer_name', 'unknown-transformer')
     logger.error(f"'{transformer_name}()' function not found. Define it add it to the `user` namespace for correct behavior")
     return dsdict
-
-def check_dataset_hashes(subset_hashdict, hashdict):
-    """Verify that one hash dictionary is a subset of another
-
-    Verifies that all keys and values of `subset_hashdict` are present (and equal) in `hashdict`
-
-    Hashes are a dict of attributes mapped to their hash value
-    Hash values are strings f"{hash_type}:{hash_value}"; e.g.
-    {
-        'data': 'sha1:38f65f3b11da4851aaaccc19b1f0cf4d3806f83b',
-        'target': 'sha1:38f65f3b11da4851aaaccc19b1f0cf4d3806f83b'
-    }
-
-    """
-    return subset_hashdict.items() <= hashdict.items()
 
 def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
     """Get the set of datasets currently cached to disk.
@@ -1497,6 +1488,7 @@ class TransformerGraph:
         for hename, he in self.transformers.items():
             if node in he['output_datasets']:
                 return set(he.get('input_datasets', [])), hename, set(he['output_datasets'])
+        raise KeyError(f"Node '{node}' not found in transformer graph")
 
     def is_source(self, edge):
         """Is this a source?
@@ -1561,7 +1553,7 @@ class TransformerGraph:
                 edges += [edge]
         return list(reversed(visited)), list(reversed(edges))
 
-    def generate_outputs(self, edge_name):
+    def process_edge(self, edge_name):
         """Generate the outputs for a given edge
 
         This assumes all dependencies are on-disk and have valid caches.
@@ -1569,6 +1561,9 @@ class TransformerGraph:
         """
         if not self.fully_satisfied(edge_name):
             raise Exception(f"Edge '{edge_name}' has unsatisfied dependencies.")
+
+        # All input datasets are on-disk and have valid caches
+
         edge = self.transformers[edge_name]
         dsdict = {}
         logger.debug(f"Processing input datasets for Edge '{edge_name}'")
@@ -1577,17 +1572,45 @@ class TransformerGraph:
             if in_ds not in self.datasets:
                 raise Exception(f"Edge '{edge_name}' specifies an input dataset, '{in_ds}' that is not in the dataset catalog")
             ds = Dataset.from_disk(in_ds)
-            cached_hashes, catalog_hashes = ds.HASHES, self.datasets[in_ds]['hashes']
-            if not check_dataset_hashes(cached_hashes, catalog_hashes):
-                raise Exception(f"Cached Dataset '{in_ds}' hashes {cached_hashes} do not match catalog {catalog_hashes}")
+            if not check_dataset_hashes(in_ds, ds.HASHES):
+                raise Exception(f"Cached Dataset '{in_ds}' hashes {self.datasets[in_ds]['hashes']} do not match catalog {ds.HASHES}")
             dsdict[in_ds] = ds
 
-        for xform, xform_opts in edge.get('transformations', ()):
-            transformer = deserialize_partial({'load_function_name':xform, 'load_function_kwargs': xform_opts}, fail_func=partial(default_transformer, transformer_name=xform))
-            _, xform_func_str = partial_call_signature(transformer)
-            logger.debug(f"Applying transformer: {xform_func_str}")
+        for xform_dict in edge.get('transformations', ()):
+            transformer = deserialize_partial(xform_dict, key_base="transformer",
+                                              fail_func=partial(default_transformer,
+                                                                transformer_name=xform_dict['transformer_name']))
+            logger.debug(f"Applying transformer: {xform_dict}")
             dsdict = transformer(dsdict)
+        return dsdict
 
+
+    def check_dataset_hashes(self, ds_name, hash_dict):
+        """Verify that the supplied hash dictionary is a subset of the hashes in the Dataset catalog
+
+        Parameters
+        ----------
+        ds_name: str
+            name of a dataset in the Dataset catalog
+        hash_dict: dict {str:str}
+            Dict of attribute names and their associated hash values
+            Hash values are strings f"{hash_type}:{hash_value}"; e.g. {
+                'data': 'sha1:38f65f3b11da4851aaaccc19b1f0cf4d3806f83b',
+                'target': 'sha1:38f65f3b11da4851aaaccc19b1f0cf4d3806f83b'
+            }
+
+        Returns
+        -------
+        True if all keys and values in hash_dict are present in (and equal to) the catalog entry for `ds_name`,
+        or if no hashes are present in the Dataset catalog entry (i.e. the dataset has never been generated).
+        False otherwise
+        """
+        if self.datasets[ds_name].get('hashes', None):
+            cached_hashes, catalog_hashes = ds_meta['hashes'], self.datasets[ds_name]['hashes']
+            if not cached_hashes.items() <= catalog_hashes.items()
+                logger.debug(f"Cached dataset '{ds_name}' hash {cached_hashes} != catalog hash {catalog_hashes}")
+                return False
+        return True
 
     def fully_satisfied(self, edge):
         """Determine whether all dependencies of the given edge (transformer) are satisfied
@@ -1607,14 +1630,21 @@ class TransformerGraph:
                 return False
             if ds_name not in self.datasets:
                 raise Exception(f"Missing '{ds_name}' in dataset catalog")
-            cached_hashes, catalog_hashes = ds_meta['hashes'], self.datasets[ds_name]['hashes']
-            if not check_dataset_hashes(cached_hashes, catalog_hashes):
-                logger.debug(f"Cached dataset '{ds_name}' hash {cached_hashes} != catalog hash {catalog_hashes}")
+            if not check_catalog_hash(ds_name, ds_meta['hashes']):
                 return False
+
+
         return True
 
-    def generate(dataset_name):
-        pass
+    def generate(self, dataset_name, write_catalog=True, force=False):
+        """Generate the specified node (dataset)
+        """
+        _, edge_list = self.traverse(dataset_name)
+        for edge in edge_list:
+            dsdict = self.process_edge(edge)
+        return dsdict.get(dataset_name, None)
+
+
 
 def create_transformer_pipeline(func_list, ignore_module=False):
     """Create a serialize transformer pipeline.
