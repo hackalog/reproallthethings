@@ -45,8 +45,10 @@ def default_transformer(dsdict, **kwargs):
     logger.error(f"'{transformer_name}()' function not found. Define it add it to the `user` namespace for correct behavior")
     return dsdict
 
-def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
+def cached_datasets(dataset_path=None, keys_only=True):
     """Get the set of datasets currently cached to disk.
+
+    Does not check whether the hashes of these cached datasets are valid / present in the catalog
 
     Parameters
     ----------
@@ -55,10 +57,13 @@ def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
     keys_only: Boolean
         if True, return a set of dataset names
         if False, return dictionary mapping dataset names to their stored metadata
-    check_hashes: Boolean
-        if True, hashes will  be checked against `dataset_cache`.
-        If they differ, an exception will be raised
 
+    Returns
+    -------
+    if (keys_only is False):
+        dictionary mapping cached dataset name to its metadata
+    else (keys_only is True):
+        set of cached dataset names
     """
     if dataset_path is None:
         dataset_path = paths['processed_data_path']
@@ -68,7 +73,7 @@ def cached_datasets(dataset_path=None, keys_only=True, check_hashes=False):
     ds_dict = {}
     for dsfile in dataset_path.glob("*.metadata"):
         ds_stem = str(dsfile.stem)
-        ds_meta = Dataset.load(ds_stem, data_path=dataset_path, metadata_only=True, check_hashes=check_hashes)
+        ds_meta = Dataset.load(ds_stem, data_path=dataset_path, metadata_only=True)
         ds_dict[ds_stem] = ds_meta
 
     if keys_only:
@@ -187,7 +192,7 @@ class Dataset(Bunch):
             self['metadata'] = {**self['metadata'], **data_hashes}
 
     def update_catalog(self, catalog_path=None, catalog_file='datasets.json'):
-        """Update the dataset catalog
+        """Update the dataset catalog with my metadata
 
         Parameters
         ----------
@@ -249,7 +254,7 @@ class Dataset(Bunch):
 
     @classmethod
     def from_disk(cls, dataset_name, data_path=None, metadata_only=False, errors=True,
-                  catalog_path=None, dataset_cache='datasets.json', check_hashes=True):
+                  catalog_path=None, dataset_cache='datasets.json'):
         """Load a dataset by name (or its metadata)
 
         errors: Boolean
@@ -265,9 +270,6 @@ class Dataset(Bunch):
             path to data catalog. default paths['catalog_path']
         dataset_cache: str. default 'datasets.json'
             name of dataset cache file. Relative to `catalog_path`.
-        check_hashes: Boolean
-            if True, hashes will  be checked against `dataset_cache`.
-            If they differ, an exception will be raised
         """
         if catalog_path is None:
             catalog_path = paths['catalog_path']
@@ -288,12 +290,6 @@ class Dataset(Bunch):
                 raise FileNotFoundError(f"No dataset {dataset_name} in {data_path}.")
             else:
                 return None
-
-        if check_hashes:
-            if not dataset_cache_fq.exists():
-                raise FileNotFoundError(f"No '{dataset_cache}' in catalog, but `check_hashes` is True")
-            else:
-                dataset_cache = load_json(dataset_cache_fq)
 
         with open(metadata_fq, 'rb') as fd:
             meta = joblib.load(fd)
