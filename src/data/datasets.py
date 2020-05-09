@@ -402,7 +402,7 @@ class Dataset(Bunch):
             raise Exception(f'Unknown Dataset: {dataset_name}')
         if dataset_name is not None:
             dsrc_dict['name'] = dataset_name
-        dsrc = DataSource.from_dict(dsrc_dict[datasource_name])
+        dsrc = DataSource.from_dict(dsrc_dict[datasource_name], name=dataset_name)
         dsrc.fetch(fetch_path=fetch_path, force=force)
         dsrc.unpack(unpack_path=unpack_path, force=force)
         ds = dsrc.process(cache_path=cache_path, force=force, **kwargs)
@@ -1000,7 +1000,7 @@ class DataSource(object):
             supplied_metadata = kwargs.pop('metadata', {})
             dset_opts = self.dataset_costructor_opts(metadata={**metadata, **supplied_metadata}, **kwargs)
             dset = Dataset(**dset_opts)
-            dset.dump(dump_path=cache_path, file_base=meta_hash)
+            dset.dump(dump_path=cache_path, file_base=meta_hash, force=force)
 
         if return_X_y:
             return dset.data, dset.target
@@ -1111,7 +1111,7 @@ class DataSource(object):
         return cls.from_dict(datasources[datasource_name])
 
     @classmethod
-    def from_dict(cls, obj_dict):
+    def from_dict(cls, obj_dict, name=None):
         """Create a DataSource from a dictionary.
 
         name: str
@@ -1121,10 +1121,13 @@ class DataSource(object):
         obj_dict: dict
             Should contain url_list, and load_function_{name|module|args|kwargs} keys,
             name, and download_dir
+        name: str or None
+            Name to be used for this dataset. If not specified, will be takedn from obj_dict
         """
         file_list = obj_dict.get('url_list', [])
         process_function = deserialize_partial(obj_dict, key_base='load_function')
-        name = obj_dict['name']
+        if name is None:
+            name = obj_dict['name']
         download_dir = obj_dict.get('download_dir', None)
         return cls(name=name,
                    process_function=process_function,
@@ -1549,12 +1552,21 @@ class TransformerGraph:
                 edges += [edge]
         return list(reversed(visited)), list(reversed(edges))
 
-    def process_edge(self, edge_name):
+    def process_edge(self, edge_name, write_catalog=True, force=False, dataset_path=None):
         """Generate the outputs for a given edge
 
         This assumes all dependencies are on-disk and have valid caches.
 
+        write_catalog: Boolean
+            If True, and hashes match, write updated Dataset metadata into the catalog
+        force: Boolean
+            If True, write updated metadata even if Dataset hashes differ. Requires write_catalog=True
+        dataset_path: path
+            location of saved dataset files
         """
+        if force is True and write_catalog is False:
+            raise Exception("Force=True requires write_catalog=True")
+
         if not self.fully_satisfied(edge_name):
             raise Exception(f"Edge '{edge_name}' has unsatisfied dependencies.")
 
@@ -1569,7 +1581,10 @@ class TransformerGraph:
                 raise Exception(f"Edge '{edge_name}' specifies an input dataset, '{in_ds}' that is not in the dataset catalog")
             ds = Dataset.from_disk(in_ds)
             if not check_dataset_hashes(in_ds, ds.HASHES):
-                raise Exception(f"Cached Dataset '{in_ds}' hashes {self.datasets[in_ds]['hashes']} do not match catalog {ds.HASHES}")
+                if force and write_catalog:
+                    logger.debug(f"Dataset Hash mismatch for {in_ds} but force=True. Writing new hash to catalog")
+                else:
+                    raise Exception(f"Cached Dataset '{in_ds}' hashes {self.datasets[in_ds]['hashes']} do not match catalog {ds.HASHES}")
             dsdict[in_ds] = ds
 
         for xform_dict in edge.get('transformations', ()):
@@ -1578,6 +1593,15 @@ class TransformerGraph:
                                                                 transformer_name=xform_dict['transformer_name']))
             logger.debug(f"Applying transformer: {xform_dict}")
             dsdict = transformer(dsdict)
+            cached_dsdicts = cached_datasets(dataset_path=dataset_path)
+            if write_catalog:
+                for ds_name, ds in dsdict.items():
+                    self.datasets[ds_name] = ds.metadata
+                    if ds_name not in cached_dsdicts: # XXX and check hashes
+                        logger.debug(f"Writing '{ds_name}' to processed data cache")
+                        ds.dump(dump_path=dataset_path, force=force, update_catalog=False)
+                logger.debug("Writing updated Dataset catalog to disk")
+                save_json(self._dataset_catalog_fq, self.datasets)
         return dsdict
 
 
@@ -1603,7 +1627,7 @@ class TransformerGraph:
         """
         if self.datasets[ds_name].get('hashes', None):
             cached_hashes, catalog_hashes = ds_meta['hashes'], self.datasets[ds_name]['hashes']
-            if not cached_hashes.items() <= catalog_hashes.items()
+            if not cached_hashes.items() <= catalog_hashes.items():
                 logger.debug(f"Cached dataset '{ds_name}' hash {cached_hashes} != catalog hash {catalog_hashes}")
                 return False
         return True
@@ -1637,7 +1661,7 @@ class TransformerGraph:
         """
         _, edge_list = self.traverse(dataset_name)
         for edge in edge_list:
-            dsdict = self.process_edge(edge)
+            dsdict = self.process_edge(edge, write_catalog=write_catalog, force=force)
         return dsdict.get(dataset_name, None)
 
 
