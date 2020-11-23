@@ -4,6 +4,7 @@ import pathlib
 import sys
 from functools import partial
 from collections import Counter, defaultdict
+from collections.abc import MutableMapping
 
 import joblib
 import fsspec
@@ -18,6 +19,7 @@ from .fetch import fetch_file,  get_dataset_filename, hash_file, unpack, infer_f
 
 
 __all__ = [
+    'Catalog',
     'Dataset',
     'add_dataset',
     'dataset_catalog',
@@ -83,7 +85,135 @@ def cached_datasets(dataset_path=None, keys_only=True):
         return set(ds_dict.keys())
     return ds_dict
 
-def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filename=False, keys_only=False):
+class Catalog(MutableMapping):
+    """A catalog is a directory of JSON files.
+    The stem of the filename is the name of the catalog entry.
+    """
+
+    def __init__(self, catalog_path=None, catalog_dir="catalog", extension="json",
+                 create_if_missing=False, catalog_data=None):
+        """
+        catalog_path: path. (default: paths['catalog_dir'])
+            Location of `catalog_dir`
+        catalog_dir: str, default 'catalog'
+            Name of directory containing JSON catalog files. relative to `catalog_path`
+        catalog_data: contents of the catalog
+        extension: string
+            file extension to use for serialized JSON files.
+        create_if_missing: boolean
+            If directory is missing, create it.
+        """
+        if catalog_path is None:
+            self.catalog_path = paths['catalog_path']
+        else:
+            self.catalog_path = pathlib.Path(catalog_path)
+        self.catalog_dir = catalog_dir
+        self.extension = extension
+
+        if not self.catalog_dir_fq.exists():
+            if create_if_missing:
+                logger.debug(f"Catalog dir: {self.catalog_dir} missing, creating...")
+                os.makedirs(self.catalog_dir_fq)
+            else:
+                raise Exception(f"Catalog dir: {self.catalog_dir_fq} does not exist. Use `create_if_missing=True` to create.")
+        self.data = catalog_data
+
+
+    @property
+    def file_glob(self):
+        return f"*.{self.extension}"
+
+    @property
+    def catalog_dir_fq(self):
+        return self.catalog_path / self.catalog_dir
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __setitem__(self, key, valuee):
+        self.data[key] = value
+        self.save_item(key)
+
+    def __delitem__(self, key):
+        del self.data[key]
+        self.del_item(key)
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __repr__(self):
+        return f"<Catalog:{list(self.data.keys())}>"
+
+    def __eq__(self, other):
+        """Two catalogs are equal if they have the same contents,
+        regardless of where or how they are stored on-disk.
+        """
+        return self.data == other.data
+
+    def load(self):
+        """reload a catalog from its on-disk serialization
+        """
+        catalog_dict = {}
+        for catalog_file in self.catalog_dir_fq.glob(self.file_glob):
+            catalog_dict[catalog_file.stem] = load_json(catalog_file)
+
+        self.data = catalog_dict
+
+    def del_item(self, key):
+        """ Delete the on-disk serialization"""
+        filename = self.catalog_dir_fq / f"{key}.{self.extension}"
+        logger.debug(f"Deleting catalog entry: '{key}.{self.extension}'...")
+        filename.unlink()
+
+    def save_item(self, key):
+        """serialize a catalog entry to disk"""
+        value = self.data[key]
+        logger.debug(f"Writing catalog entry: '{key}.{self.extension}'...")
+        save_json(self.catalog_dir_fq / f"{key}.{self.extension}", value)
+
+    def save(self, paranoid=True):
+        """Save all catalog entries to disk
+
+        if paranoid=True, verify serialization is equal to in-memory copy
+        """
+        for key in self.data:
+            self.save_item(key)
+        if paranoid:
+            old = self.data
+            self.load()
+            if old != self.data:
+                logger.error("Save failed. On-disk serialization differs from in-memory catalog")
+                self.data = old
+
+    @classmethod
+    def from_disk(cls, **kwargs):
+        """Load a catalog from disk. Parameters are the same as Catalog.__init__"""
+        catalog = cls(**kwargs)
+        catalog.load()
+        return catalog
+
+    @classmethod
+    def from_old_catalog(cls, catalog_path=None, catalog_file='catalog.json'):
+        """Create a catalog from an old combined-format JSON file
+        """
+        if catalog_path is None:
+            catalog_path = paths['catalog_path']
+        else:
+            catalog_path = pathlib.Path(catalog_path)
+
+        catalog_file_fq = catalog_path / catalog_file
+
+        if catalog_file_fq.exists():
+            catalog_dict = load_json(catalog_file_fq)
+        else:
+            logger.warning(f"Catalog '{catalog_file}' does not exist.")
+            catalog_dict = {}
+        return cls(catalog_path=catalog_path, catalog_dir=catalog_file_fq.stem, catalog_data=catalog_dict)
+
+def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filename=False, keys_only=True):
     """Get the set of available datasets from the catalog (nodes in the transformer graph).
 
     Parameters
@@ -106,7 +236,7 @@ def load_catalog(catalog_path=None, catalog_file='catalog.json', include_filenam
         catalog_dict
     """
     if keys_only and include_filename:
-        raise Exception("include_filenames=True implies keys_only=False")
+        raise Exception("include_filenames=True requires keys_only=False")
 
     if catalog_path is None:
         catalog_path = paths['catalog_path']
