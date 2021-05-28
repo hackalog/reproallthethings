@@ -240,6 +240,27 @@ class Catalog(MutableMapping):
         logger.debug(f"Deleting existing catalog dir: {name}")
         shutil.rmtree(catalog_path / name, ignore_errors=ignore_errors)
 
+    @staticmethod
+    def delete(name, ignore_errors=False, catalog_path=None):
+        """Delete the on-disk Catalog
+
+        Parameters
+        ----------
+        name: String
+            Catalog name. Also the name of the directory to be deleted
+        ignore_errors:
+            If False, throw an error if catalog does not exist
+        catalog_path:
+            Directory containing catalog. Default paths['catalog_path']
+        """
+        if catalog_path is None:
+            catalog_path = paths['catalog_path']
+        else:
+            catalog_path = pathlib.Path(catalog_path)
+
+        logger.debug(f"Deleting existing catalog dir: {name}")
+        shutil.rmtree(catalog_path / name, ignore_errors=ignore_errors)
+
     @classmethod
     def from_old_catalog(cls, catalog_file_fq, catalog_name=None, replace=False, catalog_path=None):
         """Create a catalog from an old combined-format JSON file
