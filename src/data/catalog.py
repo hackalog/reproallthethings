@@ -57,7 +57,6 @@ class Catalog(MutableMapping):
             If using `data` with an existing repo, this indicates how to merge the two
             If disk, values already stored in the catalog will be retained
             If data, contents of `data` will override existing items on disk.
-
         """
         if catalog_path is None:
             self.catalog_path = paths['catalog_path']
