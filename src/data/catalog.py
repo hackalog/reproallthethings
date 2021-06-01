@@ -57,6 +57,7 @@ class Catalog(MutableMapping):
             If using `data` with an existing repo, this indicates how to merge the two
             If disk, values already stored in the catalog will be retained
             If data, contents of `data` will override existing items on disk.
+
         """
         if catalog_path is None:
             self.catalog_path = paths['catalog_path']
@@ -218,27 +219,6 @@ class Catalog(MutableMapping):
         catalog = cls(name, create=True, delete=replace, data=data)
         return catalog
 
-
-    @staticmethod
-    def delete(name, ignore_errors=False, catalog_path=None):
-        """Delete the on-disk Catalog
-
-        Parameters
-        ----------
-        name: String
-            Catalog name. Also the name of the directory to be deleted
-        ignore_errors:
-            If False, throw an error if catalog does not exist
-        catalog_path:
-            Directory containing catalog. Default paths['catalog_path']
-        """
-        if catalog_path is None:
-            catalog_path = paths['catalog_path']
-        else:
-            catalog_path = pathlib.Path(catalog_path)
-
-        logger.debug(f"Deleting existing catalog dir: {name}")
-        shutil.rmtree(catalog_path / name, ignore_errors=ignore_errors)
 
     @staticmethod
     def delete(name, ignore_errors=False, catalog_path=None):
