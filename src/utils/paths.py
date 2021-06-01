@@ -1,6 +1,6 @@
 from .decorators import SingletonDecorator
 from .kvstore import KVStore
-from .log import logger
+from ..log import logger
 import pathlib
 
 class PathStore(KVStore):

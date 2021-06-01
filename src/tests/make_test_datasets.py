@@ -2,7 +2,7 @@ from sklearn.datasets import fetch_20newsgroups
 from functools import partial
 
 from src.data import DataSource, Dataset, DatasetGraph, Catalog
-from src import workflow, paths
+from src import paths
 from src.log import logger
 import src.log.debug
 

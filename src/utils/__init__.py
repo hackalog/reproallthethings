@@ -1,8 +1,10 @@
-import time
-import pathlib
-import numpy as np
 import json
-from .log import logger
+import numpy as np
+import pathlib
+import time
+
+from ..log import logger
+
 # Timing and Performance
 
 def timing_info(method):

@@ -1,5 +1,5 @@
 import pathlib
-from ._paths import Paths
+from .utils.paths import Paths
 
 _module_dir = pathlib.Path(__file__).parent.resolve()
 

@@ -89,8 +89,8 @@ After the first time, data will loaded from cache on disk which should be fast.
 
 To see which datasets are currently available:
 ```python
-from src import workflow
-workflow.available_datasets(keys_only=True)
+>>> from src.data import Catalog
+>>> c = Catalog.load('datasets'); c
 ```
 
 Note: sometimes datasets can be quite large. If you want to store your data externally, we recommend symlinking your data directory (that is `reproallthethings/data`) to somewhere with more room.
